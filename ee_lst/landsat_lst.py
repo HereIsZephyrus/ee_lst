@@ -23,7 +23,7 @@ def initialize_ee():
 
 
 def add_timestamp(image):
-    timestamp = image.getNumber('system:time_start')
+    timestamp = image.getNumber('system:time_start').toFloat()
     return image.addBands(ee.Image.constant(timestamp).rename('TIMESTAMP'))
     # # Convert the system:time_start property to a human-readable string
     # timestamp_string = ee.Date(image.get("system:time_start")).format(
