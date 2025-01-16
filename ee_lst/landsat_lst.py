@@ -37,7 +37,7 @@ def add_raw_timestamp(image):
     return image.set("raw_timestamp", image.get("system:time_start"))
 
 
-def fetch_landsat_collection(landsat, date_start, date_end, geometry, use_ndvi):
+def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_theshold, use_ndvi):
     """
     Fetches a Landsat collection based on the provided parameters
     and applies several transformations.
@@ -54,7 +54,6 @@ def fetch_landsat_collection(landsat, date_start, date_end, geometry, use_ndvi):
     """
     # Ensure Earth Engine is initialized
     initialize_ee()
-
     # Check if the provided Landsat collection is valid
     if landsat not in LANDSAT_BANDS.keys():
         raise ValueError(
@@ -69,19 +68,27 @@ def fetch_landsat_collection(landsat, date_start, date_end, geometry, use_ndvi):
         ee.ImageCollection(collection_dict["TOA"])
         .filterDate(date_start, date_end)
         .filterBounds(geometry)
+        .filter(ee.Filter.lessThan('CLOUD_COVER', cloud_theshold))
     )
+
+    if landsat_toa is None:
+        raise ValueError("No toa images found for the specified date range.")
 
     # Load Surface Reflectance collection for NDVI  and apply transformations
     landsat_sr = (
         ee.ImageCollection(collection_dict["SR"])
         .filterDate(date_start, date_end)
         .filterBounds(geometry)
+        .filter(ee.Filter.lessThan('CLOUD_COVER', cloud_theshold))
         .map(mask_sr)
         .map(lambda image: add_ndvi_band(landsat, image))
         .map(lambda image: add_fvc_band(landsat, image))
         .map(add_tpw_band)
         .map(lambda image: add_emissivity_band(landsat, use_ndvi, image))
     )
+
+    if landsat_sr is None:
+        raise ValueError("No sr images found for the specified date range.")
 
     # Combine collections
     tir = collection_dict["TIR"]
