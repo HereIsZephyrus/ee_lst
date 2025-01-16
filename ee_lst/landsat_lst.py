@@ -54,7 +54,6 @@ def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_thes
     """
     # Ensure Earth Engine is initialized
     initialize_ee()
-
     # Check if the provided Landsat collection is valid
     if landsat not in LANDSAT_BANDS.keys():
         raise ValueError(
@@ -69,7 +68,7 @@ def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_thes
         ee.ImageCollection(collection_dict["TOA"])
         .filterDate(date_start, date_end)
         .filterBounds(geometry)
-        .filter(ee.Filter.eq('CLOUD_COVER', cloud_theshold))
+        .filter(ee.Filter.lessThan('CLOUD_COVER', cloud_theshold))
     )
 
     if landsat_toa is None:
@@ -80,7 +79,7 @@ def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_thes
         ee.ImageCollection(collection_dict["SR"])
         .filterDate(date_start, date_end)
         .filterBounds(geometry)
-        .filter(ee.Filter.eq('CLOUD_COVER', cloud_theshold))
+        .filter(ee.Filter.lessThan('CLOUD_COVER', cloud_theshold))
         .map(mask_sr)
         .map(lambda image: add_ndvi_band(landsat, image))
         .map(lambda image: add_fvc_band(landsat, image))
