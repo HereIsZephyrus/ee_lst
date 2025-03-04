@@ -37,29 +37,31 @@ def add_timestamp(image):
 def add_raw_timestamp(image):
     return image.set("raw_timestamp", image.get("system:time_start"))
 
-def calc_cloud_cover(image, whole_geometry):
+def calc_cloud_cover(image, whole_geometry, mask_method):
     counting_image = image.clip(whole_geometry)
+    first_band_name = counting_image.bandNames().get(0)
     total_counting_pixel = counting_image.reduceRegion(
         reducer = ee.Reducer.count(),
         geometry = whole_geometry,
         scale = 30,
         maxPixels = 1e13
-    )
+    ).get(first_band_name).getInfo()
     # the invalid value pixels are cloud coverd pixels
-    cloud_cover_pixel = counting_image.eq(0).reduceRegion(
+    cloud_cover_pixel = mask_method(counting_image).reduceRegion(
         reducer = ee.Reducer.count(),
         geometry = whole_geometry,
         scale = 30,
         maxPixels = 1e13
-    )
-    return (cloud_cover_pixel / total_counting_pixel) * 100
+    ).get(first_band_name).getInfo()
+    result = (1 - float(cloud_cover_pixel / total_counting_pixel)) * 100
+    print(f"cloud cover ratio is 1 - {cloud_cover_pixel}/{total_counting_pixel} = {result}")
+    return result
 
-def add_index_func(mask_method,date_start):
+def add_index_func(date_start):
     def add_index(image):
-        image = mask_method(image)
         image_date = image.date()
-        image_ind = image_date.difference(date_start, 'day')
-        image = image.addBands(ee.Image.constant(image_ind).rename('INDEX'))
+        image_ind = image_date.difference(date_start, 'day').toInt()
+        image = image.set('INDEX', image_ind)
         return image
     return add_index
 
@@ -67,22 +69,31 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
     """
     Returns the mosaiced image with the minimum cloud cover in the cloud_cover_geometry
     """
+    total_area = geometry.area().getInfo()
     first_date = ee.Date(date_start)
     last_date = ee.Date(date_end)
-    date_range = math.floor(last_date.difference(first_date, 'day').getInfo())
-    image_condidate_list = [ee.ImageCollection([]) for _ in range(date_range)]
-    add_index = add_index_func(mask_method,date_start)
-    image_collection = image_collection.map(add_index)
+    date_range = last_date.difference(first_date, 'day').toInt().getInfo()
+    add_index = add_index_func(date_start)
+    image_collection = image_collection.map(add_index).sort('INDEX')
+    index_list = image_collection.aggregate_array('INDEX').getInfo()
+    print("index sample: ", index_list)
     best_image = None
     best_cloud_cover = 100
-    for image_list in image_condidate_list:
-        if len(image_list) > 0:
-            mosaiced_image = image_list.mosaic().clip(geometry)
-            couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry)
-            print(f"cloud cover: {couning_area_cloud_cover}")
-            if couning_area_cloud_cover < best_cloud_cover:
-                best_cloud_cover = couning_area_cloud_cover
-                best_image = mosaiced_image
+    for index in range(0,date_range):
+        image_condidate_list = image_collection.filter(ee.Filter.eq('INDEX',index))
+        image_num = image_condidate_list.size().getInfo()
+        if image_num == 0:
+            continue
+        mosaiced_image = image_condidate_list.mosaic().clip(geometry)
+        image_area = mosaiced_image.geometry().area().getInfo()
+        if ((image_area / total_area) < 0.9):
+            continue
+        couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry, mask_method)
+        print(f"cloud cover: {couning_area_cloud_cover}")
+        if couning_area_cloud_cover < best_cloud_cover:
+            best_cloud_cover = couning_area_cloud_cover
+            best_image = mask_method(mosaiced_image)
+
     if best_image is None:
         raise ValueError("No image found for the specified date range.")
     return best_image
@@ -125,6 +136,8 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
     if landsat_toa is None:
         raise ValueError("No toa images found for the specified date range.")
     best_landsat_toa = minimum_cloud_cover(landsat_toa, geometry, cloud_cover_geometry, mask_toa, date_start, date_end)
+    if best_landsat_toa is None:
+        raise ValueError("No processed toa images found for the specified date range.")
 
     # Load Surface Reflectance collection for NDVI  and apply transformations
     landsat_sr = (
@@ -137,6 +150,8 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
     if landsat_sr is None:
         raise ValueError("No sr images found for the specified date range.")
     best_landsat_sr = minimum_cloud_cover(landsat_sr, geometry, cloud_cover_geometry, mask_sr, date_start, date_end)
+    if best_landsat_sr is None:
+        raise ValueError("No processed sr images found for the specified date range.")
     best_landsat_sr = add_ndvi_band(landsat, best_landsat_sr)
     best_landsat_sr = add_fvc_band(landsat, best_landsat_sr)
     best_landsat_sr = add_tpw_band(best_landsat_sr)
@@ -146,15 +161,14 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
     tir = collection_dict["TIR"]
     visw = collection_dict["VISW"] + ["NDVI", "FVC", "TPW", "TPWpos", "EM"]
     #landsat_all = landsat_sr.select(visw).combine(landsat_toa.select(tir), True)
-    best_landsat = best_landsat_sr.select(visw).combine(best_landsat_toa.select(tir), True)
+    best_landsat = best_landsat_sr.select(visw).addBands(best_landsat_toa.select(tir))
 
     # Compute the LST
     #landsat_lst = landsat_all.map(lambda image: add_lst_band(landsat, image))
     best_landsat_lst = add_lst_band(landsat, best_landsat)
 
     # Add timestamp to each image in the collection
-    #landsat_lst = landsat_lst.map(add_timestamp) #.map(add_raw_timestamp)
-    best_landsat_lst = add_timestamp(best_landsat_lst) #.map(add_raw_timestamp)
+    best_landsat_lst = add_timestamp(best_landsat_lst)
 
     return best_landsat_lst
 
