@@ -1,7 +1,8 @@
 import ee
 import os
+import math
 from ee_lst.ncep_tpw import add_tpw_band
-from ee_lst.cloudmask import mask_sr
+from ee_lst.cloudmask import mask_sr, mask_toa
 from ee_lst.compute_ndvi import add_ndvi_band
 from ee_lst.compute_fvc import add_fvc_band
 from ee_lst.compute_emissivity import add_emissivity_band
@@ -36,8 +37,128 @@ def add_timestamp(image):
 def add_raw_timestamp(image):
     return image.set("raw_timestamp", image.get("system:time_start"))
 
+def calc_cloud_cover(image, whole_geometry):
+    counting_image = image.clip(whole_geometry)
+    total_counting_pixel = counting_image.reduceRegion(
+        reducer = ee.Reducer.count(),
+        geometry = whole_geometry,
+        scale = 30,
+        maxPixels = 1e13
+    )
+    # the invalid value pixels are cloud coverd pixels
+    cloud_cover_pixel = counting_image.eq(0).reduceRegion(
+        reducer = ee.Reducer.count(),
+        geometry = whole_geometry,
+        scale = 30,
+        maxPixels = 1e13
+    )
+    return (cloud_cover_pixel / total_counting_pixel) * 100
 
-def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_theshold, use_ndvi):
+def add_index_func(mask_method,date_start):
+    def add_index(image):
+        image = mask_method(image)
+        image_date = image.date()
+        image_ind = image_date.difference(date_start, 'day')
+        image = image.addBands(ee.Image.constant(image_ind).rename('INDEX'))
+        return image
+    return add_index
+
+def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_method, date_start, date_end):
+    """
+    Returns the mosaiced image with the minimum cloud cover in the cloud_cover_geometry
+    """
+    first_date = ee.Date(date_start)
+    last_date = ee.Date(date_end)
+    date_range = math.floor(last_date.difference(first_date, 'day').getInfo())
+    image_condidate_list = [ee.ImageCollection([]) for _ in range(date_range)]
+    add_index = add_index_func(mask_method,date_start)
+    image_collection = image_collection.map(add_index)
+    best_image = None
+    best_cloud_cover = 100
+    for image_list in image_condidate_list:
+        if len(image_list) > 0:
+            mosaiced_image = image_list.mosaic().clip(geometry)
+            couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry)
+            print(f"cloud cover: {couning_area_cloud_cover}")
+            if couning_area_cloud_cover < best_cloud_cover:
+                best_cloud_cover = couning_area_cloud_cover
+                best_image = mosaiced_image
+    if best_image is None:
+        raise ValueError("No image found for the specified date range.")
+    return best_image
+
+def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold,cloud_cover_geometry,use_ndvi = False):
+    """
+    Fetches the best Landsat image(mimum cloud cover in cloud_cover_geometry)
+
+    Parameters:
+    - landsat: Name of the Landsat collection (e.g., 'L8')
+    - date_start: Start date for the collection
+    - date_end: End date for the collection
+    - geometry: Area of interest
+    - cloud_theshold: Cloud cover threshold
+    - cloud_cover_geometry: Area of interest for cloud cover
+    - use_ndvi: Boolean indicating whether to use NDVI
+
+    Returns:
+    - landsatLST: Processed Landsat collection with LST
+    """
+    # Ensure Earth Engine is initialized
+    initialize_ee()
+    # Check if the provided Landsat collection is valid
+    if landsat not in LANDSAT_BANDS.keys():
+        raise ValueError(
+            f"Invalid Landsat constellation: {landsat}. \
+            Valid options are: {list(LANDSAT_BANDS.keys())}"
+        )
+
+    collection_dict = LANDSAT_BANDS[landsat]
+
+    # Load TOA Radiance/Reflectance
+    landsat_toa = (
+        ee.ImageCollection(collection_dict["TOA"])
+        .filterDate(date_start, date_end)
+        .filterBounds(geometry)
+        .filter(ee.Filter.lessThan('CLOUD_COVER', cloud_theshold))
+    )
+
+    if landsat_toa is None:
+        raise ValueError("No toa images found for the specified date range.")
+    best_landsat_toa = minimum_cloud_cover(landsat_toa, geometry, cloud_cover_geometry, mask_toa, date_start, date_end)
+
+    # Load Surface Reflectance collection for NDVI  and apply transformations
+    landsat_sr = (
+        ee.ImageCollection(collection_dict["SR"])
+        .filterDate(date_start, date_end)
+        .filterBounds(geometry)
+        .filter(ee.Filter.lessThan('CLOUD_COVER', cloud_theshold))
+    )
+
+    if landsat_sr is None:
+        raise ValueError("No sr images found for the specified date range.")
+    best_landsat_sr = minimum_cloud_cover(landsat_sr, geometry, cloud_cover_geometry, mask_sr, date_start, date_end)
+    best_landsat_sr = add_ndvi_band(landsat, best_landsat_sr)
+    best_landsat_sr = add_fvc_band(landsat, best_landsat_sr)
+    best_landsat_sr = add_tpw_band(best_landsat_sr)
+    best_landsat_sr = add_emissivity_band(landsat, use_ndvi, best_landsat_sr)
+
+    # Combine collections
+    tir = collection_dict["TIR"]
+    visw = collection_dict["VISW"] + ["NDVI", "FVC", "TPW", "TPWpos", "EM"]
+    #landsat_all = landsat_sr.select(visw).combine(landsat_toa.select(tir), True)
+    best_landsat = best_landsat_sr.select(visw).combine(best_landsat_toa.select(tir), True)
+
+    # Compute the LST
+    #landsat_lst = landsat_all.map(lambda image: add_lst_band(landsat, image))
+    best_landsat_lst = add_lst_band(landsat, best_landsat)
+
+    # Add timestamp to each image in the collection
+    #landsat_lst = landsat_lst.map(add_timestamp) #.map(add_raw_timestamp)
+    best_landsat_lst = add_timestamp(best_landsat_lst) #.map(add_raw_timestamp)
+
+    return best_landsat_lst
+
+def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_theshold, use_ndvi = False):
     """
     Fetches a Landsat collection based on the provided parameters
     and applies several transformations.
@@ -47,6 +168,7 @@ def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_thes
     - date_start: Start date for the collection
     - date_end: End date for the collection
     - geometry: Area of interest
+    - cloud_theshold: Cloud cover threshold
     - use_ndvi: Boolean indicating whether to use NDVI
 
     Returns:
