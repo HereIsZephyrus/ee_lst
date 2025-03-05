@@ -9,12 +9,8 @@ from ee_lst.compute_emissivity import add_emissivity_band
 from ee_lst.smw_algorithm import add_lst_band
 from ee_lst.constants import LANDSAT_BANDS
 
-# Set up logging configuration
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
+logging.getLogger('ee').setLevel(logging.WARNING)
 
 # Set the path to the service account key file
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "../.gee-sa-priv-key.json"
@@ -103,7 +99,6 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
             continue
         mosaiced_image = image_condidate_list.mosaic().clip(geometry)
         couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry, mask_method)
-        logger.info(f"cloud cover: {couning_area_cloud_cover}")
         if couning_area_cloud_cover < best_cloud_cover:
             best_cloud_cover = couning_area_cloud_cover
             best_image = mask_method(mosaiced_image).set('day', index+1)
@@ -149,7 +144,12 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
 
     if landsat_toa is None:
         raise ValueError("No toa images found for the specified date range.")
-    best_landsat_toa = minimum_cloud_cover(landsat_toa, geometry, cloud_cover_geometry, mask_toa, date_start, date_end)
+    
+    try:
+        best_landsat_toa = minimum_cloud_cover(landsat_toa, geometry, cloud_cover_geometry, mask_toa, date_start, date_end)
+    except Exception as e:
+        logger.error(f"Error finding toa minimum cloud cover: {e}")
+        raise e
     if best_landsat_toa is None:
         raise ValueError("No processed toa images found for the specified date range.")
 
@@ -163,27 +163,58 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
 
     if landsat_sr is None:
         raise ValueError("No sr images found for the specified date range.")
-    best_landsat_sr = minimum_cloud_cover(landsat_sr, geometry, cloud_cover_geometry, mask_sr, date_start, date_end)
+    
+    try:
+        best_landsat_sr = minimum_cloud_cover(landsat_sr, geometry, cloud_cover_geometry, mask_sr, date_start, date_end)
+    except Exception as e:
+        logger.error(f"Error finding sr minimum cloud cover: {e}")
+        raise e
     if best_landsat_sr is None:
         raise ValueError("No processed sr images found for the specified date range.")
-    best_landsat_sr = add_ndvi_band(landsat, best_landsat_sr)
-    best_landsat_sr = add_fvc_band(landsat, best_landsat_sr)
-    best_landsat_sr = add_tpw_band(best_landsat_sr)
-    best_landsat_sr = add_emissivity_band(landsat, use_ndvi, best_landsat_sr)
+    try:
+        best_landsat_sr = add_ndvi_band(landsat, best_landsat_sr)
+        best_landsat_sr = add_fvc_band(landsat, best_landsat_sr)
+        best_landsat_sr = add_tpw_band(best_landsat_sr)
+    except Exception as e:  
+        logger.error(f"Error adding NDVI, FVC, TPW bands: {e}")
+        raise e
+    
+    try:
+        best_landsat_sr = add_emissivity_band(landsat, use_ndvi, best_landsat_sr)
+    except Exception as e:
+        logger.error(f"Error adding emissivity band: {e}")
+        raise e
 
     # Combine collections
     tir = collection_dict["TIR"]
     visw = collection_dict["VISW"] + ["NDVI", "FVC", "TPW", "TPWpos", "EM"]
     #landsat_all = landsat_sr.select(visw).combine(landsat_toa.select(tir), True)
-    best_landsat = best_landsat_sr.select(visw).addBands(best_landsat_toa.select(tir))
+    try:
+        best_landsat = best_landsat_sr.select(visw).addBands(best_landsat_toa.select(tir))
+    except Exception as e:
+        logger.error(f"Error adding bands: {e}")
+        raise e
 
     # Compute the LST
     #landsat_lst = landsat_all.map(lambda image: add_lst_band(landsat, image))
-    best_landsat_lst = add_lst_band(landsat, best_landsat)
-    logger.debug(f"best_landsat_lst's band: {best_landsat_lst.bandNames().getInfo()}")
-
-    # Add timestamp to each image in the collection
+    try:
+        best_landsat_lst = add_lst_band(landsat, best_landsat)
+    except Exception as e:
+        logger.error(f"Error adding LST band: {e}")
+        raise e
     best_landsat_lst = add_timestamp(best_landsat_lst)
+    best_landsat_lst = best_landsat_lst.addBands(ee.Image.constant(0).rename('value'))
+    if best_landsat_lst is None:
+        logger.error("No processed LST images found for the specified date range.")
+        raise ValueError("No processed LST images found for the specified date range.")
+    try:
+        property = best_landsat_lst.propertyNames().getInfo()
+        logger.debug(f"best_landsat_lst's property: {property}")
+        #band_names = best_landsat_lst.getInfo()
+        #logger.debug(f"best_landsat_lst's band: {band_names}")
+    except Exception as e:
+        logger.error(f"Error getting band names: {e}")
+        raise e
 
     return best_landsat_lst
 
