@@ -84,13 +84,14 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
         image_num = image_condidate_list.size().getInfo()
         if image_num == 0:
             continue
-        mosaiced_image = image_condidate_list.mosaic().clip(geometry)
-        valid_mask = mosaiced_image.reduce(ee.Reducer.allNonZero())
-        mosaiced_image = mosaiced_image.updateMask(valid_mask)
-        image_area = mosaiced_image.geometry().area().getInfo()
-        print(f'the image collection size is {image_num}, the city area is {total_area}, the image area is {image_area}, the proportion is {image_area / total_area}')
+        mosaiced_image = image_condidate_list.mosaic()
+        raw_geometry = mosaiced_image.geometry()
+        intersect = raw_geometry.intersection(geometry)
+        image_area = intersect.area().getInfo()
+        print(f'the image collection size is {image_num}, the city area is {image_area}, the image area is {total_area}, the proportion is {image_area / total_area}')
         if ((image_area / total_area) < 0.9):
             continue
+        mosaiced_image = mosaiced_image.clip(geometry)
         couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry, mask_method)
         print(f"cloud cover: {couning_area_cloud_cover}")
         if couning_area_cloud_cover < best_cloud_cover:
