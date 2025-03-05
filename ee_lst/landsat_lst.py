@@ -1,6 +1,6 @@
 import ee
 import os
-import math
+import logging
 from ee_lst.ncep_tpw import add_tpw_band
 from ee_lst.cloudmask import mask_sr, mask_toa
 from ee_lst.compute_ndvi import add_ndvi_band
@@ -8,6 +8,13 @@ from ee_lst.compute_fvc import add_fvc_band
 from ee_lst.compute_emissivity import add_emissivity_band
 from ee_lst.smw_algorithm import add_lst_band
 from ee_lst.constants import LANDSAT_BANDS
+
+# Set up logging configuration
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Set the path to the service account key file
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "../.gee-sa-priv-key.json"
@@ -18,7 +25,7 @@ def initialize_ee():
         try:
             ee.Initialize()
         except Exception:
-            print("Please authenticate Google Earth Engine first.")
+            logger.error("Please authenticate Google Earth Engine first.")
             ee.Authenticate()
             ee.Initialize()
 
@@ -54,7 +61,7 @@ def calc_cloud_cover(image, whole_geometry, mask_method):
         maxPixels = 1e13
     ).get(first_band_name).getInfo()
     result = (1 - float(cloud_cover_pixel / total_counting_pixel)) * 100
-    print(f"cloud cover ratio is 1 - {cloud_cover_pixel}/{total_counting_pixel} = {result}")
+    logger.info(f"cloud cover ratio is 1 - {cloud_cover_pixel}/{total_counting_pixel} = {result}%")
     return result
 
 def add_index_func(date_start):
@@ -76,7 +83,7 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
     add_index = add_index_func(date_start)
     image_collection = image_collection.map(add_index).sort('INDEX')
     index_list = image_collection.aggregate_array('INDEX').getInfo()
-    print("index sample: ", index_list)
+    logger.debug("index sample: %s", index_list)
     best_image = None
     best_cloud_cover = 100
     for index in range(0,date_range):
@@ -84,16 +91,19 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
         image_num = image_condidate_list.size().getInfo()
         if image_num == 0:
             continue
-        mosaiced_image = image_condidate_list.mosaic()
-        raw_geometry = mosaiced_image.geometry()
+        geometries_feature = image_condidate_list.map(
+            lambda image: ee.Feature(image.geometry())
+        )
+        geometries_feature = ee.FeatureCollection(geometries_feature)
+        raw_geometry = geometries_feature.union().geometry()
         intersect = raw_geometry.intersection(geometry)
         image_area = intersect.area().getInfo()
-        print(f'the image collection size is {image_num}, the city area is {image_area}, the image area is {total_area}, the proportion is {image_area / total_area}')
+        logger.info(f'index {index} has {image_num} images, the proportion is {image_area} / {total_area} = {image_area / total_area}')
         if ((image_area / total_area) < 0.9):
             continue
-        mosaiced_image = mosaiced_image.clip(geometry)
+        mosaiced_image = image_condidate_list.mosaic().clip(geometry)
         couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry, mask_method)
-        print(f"cloud cover: {couning_area_cloud_cover}")
+        logger.info(f"cloud cover: {couning_area_cloud_cover}")
         if couning_area_cloud_cover < best_cloud_cover:
             best_cloud_cover = couning_area_cloud_cover
             best_image = mask_method(mosaiced_image).set('day', index+1)
@@ -170,7 +180,7 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
     # Compute the LST
     #landsat_lst = landsat_all.map(lambda image: add_lst_band(landsat, image))
     best_landsat_lst = add_lst_band(landsat, best_landsat)
-    print(f"best_landsat_lst's band: {best_landsat_lst.bandNames().getInfo()}")
+    logger.debug(f"best_landsat_lst's band: {best_landsat_lst.bandNames().getInfo()}")
 
     # Add timestamp to each image in the collection
     best_landsat_lst = add_timestamp(best_landsat_lst)
