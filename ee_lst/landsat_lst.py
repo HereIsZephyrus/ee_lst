@@ -85,14 +85,17 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
         if image_num == 0:
             continue
         mosaiced_image = image_condidate_list.mosaic().clip(geometry)
+        valid_mask = mosaiced_image.reduce(ee.Reducer.allNonZero())
+        mosaiced_image = mosaiced_image.updateMask(valid_mask)
         image_area = mosaiced_image.geometry().area().getInfo()
+        print(f'the image collection size is {image_num}, the city area is {total_area}, the image area is {image_area}, the proportion is {image_area / total_area}')
         if ((image_area / total_area) < 0.9):
             continue
         couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry, mask_method)
         print(f"cloud cover: {couning_area_cloud_cover}")
         if couning_area_cloud_cover < best_cloud_cover:
             best_cloud_cover = couning_area_cloud_cover
-            best_image = mask_method(mosaiced_image)
+            best_image = mask_method(mosaiced_image).set('day', index+1)
 
     if best_image is None:
         raise ValueError("No image found for the specified date range.")
@@ -166,6 +169,7 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
     # Compute the LST
     #landsat_lst = landsat_all.map(lambda image: add_lst_band(landsat, image))
     best_landsat_lst = add_lst_band(landsat, best_landsat)
+    print(f"best_landsat_lst's band: {best_landsat_lst.bandNames().getInfo()}")
 
     # Add timestamp to each image in the collection
     best_landsat_lst = add_timestamp(best_landsat_lst)
