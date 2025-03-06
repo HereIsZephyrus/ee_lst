@@ -13,24 +13,19 @@ def add_tpw_band(image):
     Returns:
     - ee.Image: Image with added 'TPW' and 'TPWpos' bands.
     """
-
-    date = ee.Date(image.get("system:time_start"))
-    year = date.get("year")
-    month = date.get("month")
-    day = date.get("day")
-    dateString = year.format().cat("-").cat(month.format()).cat("-").cat(day.format())
-    date1 = ee.Date(dateString)
-    date2 = date1.advance(1, "days")
+    date = image.date()
+    date1 = date
+    date2 = date1.advance(3, 'day')
 
     def datedist(img):
         return img.set(
             "DateDist",
-            ee.Number(img.get("system:time_start")).subtract(date.millis()).abs(),
+            ee.Number(img.date().millis()).subtract(date.millis()).abs(),
         )
 
     tpw_collection = (
         ee.ImageCollection("NCEP_RE/surface_wv")
-        .filterDate(date1.format("yyyy-MM-dd"), date2.format("yyyy-MM-dd"))
+        .filterDate(date1, date2)
         .map(datedist)
     )
 
@@ -42,7 +37,7 @@ def add_tpw_band(image):
         else ee.Image.constant(-999.0)
     )
     tpw2 = (
-        ee.Image(closest.get(1)).select("pr_wtr")
+    ee.Image(closest.get(1)).select("pr_wtr")
         if ee.Number(closest.size()).gt(1)
         else tpw1
     )
@@ -54,9 +49,9 @@ def add_tpw_band(image):
     )
     time2 = (
         ee.Number(tpw2.get("DateDist")).divide(21600000)
-        if ee.Number(closest.size()).gt(1)
-        else ee.Number(0.0)
-    )
+            if ee.Number(closest.size()).gt(1)
+            else ee.Number(0.0)
+        )
 
     tpw = tpw1.expression(
         "tpw1*time2+tpw2*time1",
