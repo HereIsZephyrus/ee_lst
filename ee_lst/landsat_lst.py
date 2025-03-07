@@ -73,16 +73,12 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
     Returns the mosaiced image with the minimum cloud cover in the cloud_cover_geometry
     """
     total_area = geometry.area().getInfo()
-    first_date = ee.Date(date_start)
-    last_date = ee.Date(date_end)
-    date_range = last_date.difference(first_date, 'day').toInt().getInfo()
     add_index = add_index_func(date_start)
-    image_collection = image_collection.map(add_index).sort('INDEX')
-    index_list = image_collection.aggregate_array('INDEX').getInfo()
-    logger.debug("index sample: %s", index_list)
+    image_collection = image_collection.map(add_index)
+    index_list = list(set(image_collection.aggregate_array('INDEX').getInfo()))
     best_image = None
     best_cloud_cover = 100
-    for index in range(0,date_range):
+    for index in index_list:
         image_condidate_list = image_collection.filter(ee.Filter.eq('INDEX',index))
         image_num = image_condidate_list.size().getInfo()
         if image_num == 0:
@@ -166,7 +162,6 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
         raise e
 
     # Load Surface Reflectance collection for NDVI  and apply transformations
-    
     try:
         best_landsat_sr = minimum_cloud_cover(landsat_sr, geometry, cloud_cover_geometry, mask_sr, date_start, date_end)
     except ValueError as ve:
