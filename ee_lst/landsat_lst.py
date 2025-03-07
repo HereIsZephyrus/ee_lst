@@ -49,6 +49,8 @@ def calc_cloud_cover(image, whole_geometry, mask_method):
         scale = 30,
         maxPixels = 1e13
     ).get(first_band_name).getInfo()
+    if (total_counting_pixel == 0):
+        raise ValueError("the image is not cover the urban area")
     # the invalid value pixels are cloud coverd pixels
     cloud_cover_pixel = mask_method(counting_image).reduceRegion(
         reducer = ee.Reducer.count(),
@@ -91,12 +93,16 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
         raw_geometry = geometries_feature.union().geometry()
         intersect = raw_geometry.intersection(geometry)
         image_area = intersect.area().getInfo()
-        porpotion += image_area / total_area
+        porpotion = image_area / total_area
         logger.info(f'index {index} has {image_num} images, the proportion is {image_area} / {total_area} = {porpotion}')
         if (porpotion < 0.8):
             continue
         mosaiced_image = image_condidate_list.mosaic().clip(geometry)
-        couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry, mask_method)
+        try:
+            couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry, mask_method)
+        except ValueError as e:
+            logger.warning(f"{e}")
+            continue
         if couning_area_cloud_cover < best_cloud_cover:
             best_cloud_cover = couning_area_cloud_cover
             construct_date = ee.Date(date_start).advance(index, 'day').millis()
