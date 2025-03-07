@@ -214,6 +214,8 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
         logger.error("No processed LST images found for the specified date range.")
         raise ValueError("No processed LST images found for the specified date range.")
 
+    # align all bands to the same value type
+    best_landsat_lst = best_landsat_lst.select(best_landsat_lst.bandNames()).toFloat()
     return best_landsat_lst
 
 def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_theshold, use_ndvi = False):
