@@ -22,31 +22,13 @@ LANDSAT_BANDS = {
         "TOA": "LANDSAT/LC08/C02/T1_TOA",
         "SR": "LANDSAT/LC08/C02/T1_L2",
         "TIR": ["B10", "B11"],
-        "VISW": [
-            "SR_B1",
-            "SR_B2",
-            "SR_B3",
-            "SR_B4",
-            "SR_B5",
-            "SR_B6",
-            "SR_B7",
-            "QA_PIXEL",
-        ],
+        "VISW": ["SR_B1","SR_B2","SR_B3","SR_B4","SR_B5","SR_B6","SR_B7","QA_PIXEL"],
     },
     "L9": {
         "TOA": "LANDSAT/LC09/C02/T1_TOA",
         "SR": "LANDSAT/LC09/C02/T1_L2",
         "TIR": ["B10", "B11"],
-        "VISW": [
-            "SR_B1",
-            "SR_B2",
-            "SR_B3",
-            "SR_B4",
-            "SR_B5",
-            "SR_B6",
-            "SR_B7",
-            "QA_PIXEL",
-        ],
+        "VISW": ["SR_B1","SR_B2","SR_B3","SR_B4","SR_B5","SR_B6","SR_B7","QA_PIXEL"],
     },
 }
 
