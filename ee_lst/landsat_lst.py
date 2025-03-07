@@ -78,6 +78,7 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
     index_list = list(set(image_collection.aggregate_array('INDEX').getInfo()))
     best_image = None
     best_cloud_cover = 100
+    porpotion = 0
     for index in index_list:
         image_condidate_list = image_collection.filter(ee.Filter.eq('INDEX',index))
         image_num = image_condidate_list.size().getInfo()
@@ -90,8 +91,9 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
         raw_geometry = geometries_feature.union().geometry()
         intersect = raw_geometry.intersection(geometry)
         image_area = intersect.area().getInfo()
-        logger.info(f'index {index} has {image_num} images, the proportion is {image_area} / {total_area} = {image_area / total_area}')
-        if ((image_area / total_area) < 0.8):
+        porpotion += image_area / total_area
+        logger.info(f'index {index} has {image_num} images, the proportion is {image_area} / {total_area} = {porpotion}')
+        if (porpotion < 0.8):
             continue
         mosaiced_image = image_condidate_list.mosaic().clip(geometry)
         couning_area_cloud_cover = calc_cloud_cover(mosaiced_image, cloud_cover_geometry, mask_method)
@@ -102,9 +104,7 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
 
     if best_image is None:
         raise ValueError("No image found for the specified date range.")
-    # fill image nan with 0
-    best_image = best_image.unmask(0)
-    return best_image
+    return best_image, porpotion, best_cloud_cover
 
 def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold,cloud_cover_geometry,use_ndvi = False):
     """
@@ -153,7 +153,7 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
         raise ValueError("No sr images found for the specified date range.")
     
     try:
-        best_landsat_toa = minimum_cloud_cover(landsat_toa, geometry, cloud_cover_geometry, mask_toa, date_start, date_end)
+        best_landsat_toa, toa_porpotion, toa_cloud_cover = minimum_cloud_cover(landsat_toa, geometry, cloud_cover_geometry, mask_toa, date_start, date_end)
     except ValueError as ve:
         e = ValueError(f"TOA: {ve}")
         raise e
@@ -163,7 +163,7 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
 
     # Load Surface Reflectance collection for NDVI  and apply transformations
     try:
-        best_landsat_sr = minimum_cloud_cover(landsat_sr, geometry, cloud_cover_geometry, mask_sr, date_start, date_end)
+        best_landsat_sr, sr_porpotion, sr_cloud_cover = minimum_cloud_cover(landsat_sr, geometry, cloud_cover_geometry, mask_sr, date_start, date_end)
     except ValueError as ve:
         e = ValueError(f"SR: {ve}")
         raise e
@@ -216,7 +216,7 @@ def fetch_best_landsat_image(landsat,date_start,date_end,geometry,cloud_theshold
 
     # align all bands to the same value type
     best_landsat_lst = best_landsat_lst.select(best_landsat_lst.bandNames()).toFloat()
-    return best_landsat_lst
+    return best_landsat_lst, toa_porpotion, sr_porpotion, toa_cloud_cover, sr_cloud_cover
 
 def fetch_landsat_collection(landsat, date_start, date_end, geometry, cloud_theshold, use_ndvi = False):
     """
