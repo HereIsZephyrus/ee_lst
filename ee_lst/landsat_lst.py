@@ -59,7 +59,7 @@ def calc_cloud_cover(image, whole_geometry, mask_method):
         maxPixels = 1e13
     ).get(first_band_name).getInfo()
     result = (1 - float(cloud_cover_pixel / total_counting_pixel)) * 100
-    logger.info(f"cloud cover ratio is 1 - {cloud_cover_pixel}/{total_counting_pixel} = {result}%")
+    logger.debug(f"cloud cover ratio is 1 - {cloud_cover_pixel}/{total_counting_pixel} = {result}%")
     return result
 
 def add_index_func(date_start):
@@ -94,7 +94,7 @@ def minimum_cloud_cover(image_collection, geometry, cloud_cover_geometry, mask_m
         intersect = raw_geometry.intersection(geometry)
         image_area = intersect.area().getInfo()
         porpotion = image_area / total_area
-        logger.info(f'index {index} has {image_num} images, the proportion is {image_area} / {total_area} = {porpotion}')
+        logger.debug(f'index {index} has {image_num} images, the proportion is {image_area} / {total_area} = {porpotion}')
         if (porpotion < 0.8):
             continue
         mosaiced_image = image_condidate_list.mosaic().clip(geometry)
